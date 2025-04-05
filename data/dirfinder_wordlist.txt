@@ -1,0 +1,8 @@
+admin
+login
+uploads
+config
+backup
+assets
+private
+hidden

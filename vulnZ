@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+import os
+import random
+import argparse
+import time
+import socket
+from scapy.all import IP, sr1, ICMP
+from urllib.parse import urlparse
+import requests
+import dns.resolver
+from datetime import datetime
+
+# ========== Quotes ==========
+dark_quotes = [
+    "The quieter the port... the louder the breach.",
+    "Firewalls are just speed bumps for the determined.",
+    "In every open port lies a story, in every banner, a vulnerability.",
+    "The system sleeps... but I do not.",
+    "Exploit code is the poetry of the underground.",
+    "Behind every service version... there's a forgotten patch.",
+    "I scan, therefore I am.",
+    "When ports speak, I listen.",
+    "A thousand lines of defense fall to one packet well sent.",
+    "Fear the beast that lives in the ports you ignore."
+]
+
+# ========== Banner ==========
+def print_banner():
+    banner = r"""
+             _        ______
+            | |      |___  /
+__   ___   _| |_ __     / / 
+\ \ / / | | | | '_ \   / /  
+ \ V /| |_| | | | | |./ /___
+  \_/  \__,_|_|_| |_|\_____/                      
+"""
+    print("\033[1;36m" + banner + "\033[0m")
+    print("\033[36mPowered by vulnZ | Cyber Recon & Exploit Finder\033[0m")
+    print("\033[32mAuthor: Cenzoo | GitHub: https://github.com/Cenzer0/vulnZ\033[0m")
+    print(f"\033[35m💡 {random.choice(dark_quotes)}\033[0m\n")
+
+# ========== Port Scanner ==========
+def scan_port(ip, port, timeout=1):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((ip, port))
+        if result == 0:
+            try:
+                sock.send(b'\r\n')
+                banner = sock.recv(1024).decode(errors="ignore").strip()
+            except:
+                banner = ""
+            return port, banner
+    except Exception:
+        pass
+    finally:
+        sock.close()
+    return None
+
+# ========== OS Fingerprinting ==========
+def fingerprint_os(ip):
+    print("[+] Attempting OS fingerprinting...")
+    pkt = IP(dst=ip)/ICMP()
+    resp = sr1(pkt, timeout=2, verbose=0)
+    if resp:
+        ttl = int(resp.ttl)
+        if ttl >= 128:
+            os = "Windows"
+        elif ttl >= 64:
+            os = "Linux/Unix"
+        elif ttl >= 254:
+            os = "Cisco/Network Device"
+        else:
+            os = "Unknown"
+        print(f"[+] OS Guess based on TTL={ttl} → {os}")
+    else:
+        print("[-] No ICMP reply received, cannot guess OS.")
+
+# ========== CVE Lookup ==========
+def search_cve(banner):
+    if not banner:
+        return
+    print(f"  [*] Searching CVEs for banner: {banner}")
+    try:
+        query = banner.replace(" ", "+")
+        url = f"https://cve.circl.lu/api/search/{query}"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if 'results' in data and data['results']:
+                for item in data['results'][:3]:
+                    print(f"    [+] CVE: {item['id']} - {item.get('summary', 'No summary')}")
+            else:
+                print("    [-] No CVEs found.")
+        else:
+            print("    [-] Error fetching CVE data.")
+    except Exception as e:
+        print(f"    [-] CVE lookup failed: {e}")
+
+# ========== Subdomain Finder ==========
+def find_subdomains(domain):
+    print(f"[+] Finding subdomains for: {domain}")
+    common = ['www', 'mail', 'ftp', 'test', 'dev', 'vpn', 'cpanel', 'webmail']
+    found = []
+    for sub in common:
+        full = f"{sub}.{domain}"
+        try:
+            dns.resolver.resolve(full, 'A')
+            print(f"  [+] Found: {full}")
+            found.append(full)
+        except:
+            pass
+    return found
+
+# ========== Index of Scanner ==========
+def scan_indexof(url):
+    print(f"[+] Scanning for Index of: {url}")
+    try:
+        response = requests.get(url, timeout=5)
+        if "Index of /" in response.text:
+            print("  [+] Possible Directory Listing Found!")
+            filename = f"loot/indexof/indexof_{urlparse(url).netloc}.html"
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(response.text)
+            print(f"  [+] Saved to {filename}")
+        else:
+            print("  [-] No Index Of found.")
+    except Exception as e:
+        print(f"  [-] Error: {e}")
+
+# ========== Directory Finder ==========
+def directory_finder(target_url):
+    print(f"[+] Directory Finder for: {target_url}")
+    wordlist = ['admin', 'login', 'uploads', 'images', 'css', 'js', 'config', 'backup']
+    for path in wordlist:
+        url = target_url.rstrip('/') + '/' + path
+        try:
+            r = requests.get(url, timeout=3)
+            if r.status_code in [200, 403]:
+                print(f"  [+] Found: {url} (Status: {r.status_code})")
+        except:
+            continue
+
+# ========== Domain to IP Resolver ==========
+def resolve_domain(domain):
+    try:
+        ip = socket.gethostbyname(domain)
+        print(f"[+] {domain} resolved to {ip}")
+        return ip
+    except:
+        print("[-] Failed to resolve domain.")
+        return None
+
+# ========== Interactive Shell ==========
+def interactive_shell():
+    print("\n🔮 Welcome to vulnZ Interactive Shell (type 'help' for commands)\n")
+    while True:
+        try:
+            cmd = input("vulnZ > ").strip()
+            if cmd in ["exit", "quit"]:
+                break
+            elif cmd == "help":
+                print("""
+Commands:
+  scan -t <target>     → Scan target ports
+  os -t <target>       → Fingerprint OS
+  cve -b <banner>      → Lookup CVE from banner
+  subs -d <domain>     → Subdomain discovery
+  indexof -u <url>     → Check for Index Of
+  dir -u <url>         → Directory finder
+  resolve -d <domain>  → Resolve domain to IP
+  quote                → Random hacking quote
+  exit                 → Quit
+                """)
+            elif cmd.startswith("scan -t"):
+                target = cmd.split("-t")[-1].strip()
+                for port in range(1, 101):
+                    result = scan_port(target, port)
+                    if result:
+                        p, b = result
+                        print(f"[OPEN] Port {p} | Banner: {b if b else 'No banner'}")
+            elif cmd.startswith("os -t"):
+                target = cmd.split("-t")[-1].strip()
+                fingerprint_os(target)
+            elif cmd.startswith("cve -b"):
+                banner = cmd.split("-b")[-1].strip()
+                search_cve(banner)
+            elif cmd.startswith("subs -d"):
+                domain = cmd.split("-d")[-1].strip()
+                find_subdomains(domain)
+            elif cmd.startswith("indexof -u"):
+                url = cmd.split("-u")[-1].strip()
+                scan_indexof(url)
+            elif cmd.startswith("dir -u"):
+                url = cmd.split("-u")[-1].strip()
+                directory_finder(url)
+            elif cmd.startswith("resolve -d"):
+                domain = cmd.split("-d")[-1].strip()
+                resolve_domain(domain)
+            elif cmd == "quote":
+                print(f"💡 {random.choice(dark_quotes)}")
+            else:
+                print("[!] Unknown command. Type 'help' for options.")
+        except KeyboardInterrupt:
+            print("\n[!] Interrupted.")
+            break
+
+# ========== Main ==========
+def main():
+    parser = argparse.ArgumentParser(description="vulnZ - Cyber Recon & Exploit Scanner")
+    parser.add_argument("-t", "--target", help="Target IP or domain")
+    parser.add_argument("--os", action="store_true", help="Fingerprint OS")
+    parser.add_argument("--cve", action="store_true", help="Search CVE from banners")
+    parser.add_argument("--subs", action="store_true", help="Find subdomains")
+    parser.add_argument("--indexof", action="store_true", help="Check for Index Of exposure")
+    parser.add_argument("--dir", action="store_true", help="Scan common directories")
+    parser.add_argument("--resolve", action="store_true", help="Resolve domain to IP")
+    parser.add_argument("--dragon", action="store_true", help="Enable dragon mode (quotes)")
+    parser.add_argument("--shell", action="store_true", help="Launch interactive shell")
+    args = parser.parse_args()
+
+    print_banner()
+
+    if args.shell:
+        interactive_shell()
+        return
+
+    if args.dragon:
+        print("\033[31m🔥 Dragon Mode Activated!\033[0m")
+        print(f"\033[35m\"{random.choice(dark_quotes)}\"\033[0m\n")
+
+    if not args.target:
+        parser.print_help()
+        return
+
+    ip = args.target
+
+    if args.resolve:
+        resolve_domain(ip)
+
+    if args.os:
+        fingerprint_os(ip)
+
+    if args.subs:
+        find_subdomains(ip)
+
+    if args.indexof:
+        if not ip.startswith("http"):
+            ip = "http://" + ip
+        scan_indexof(ip)
+
+    if args.dir:
+        if not ip.startswith("http"):
+            ip = "http://" + ip
+        directory_finder(ip)
+
+    print(f"[+] Starting TCP Port Scan on {ip} (1-100)...")
+    for port in range(1, 101):
+        result = scan_port(ip, port)
+        if result:
+            port_open, banner = result
+            print(f"[OPEN] Port {port_open} | Banner: {banner if banner else 'No banner'}")
+            if args.cve:
+                search_cve(banner)
+
+if __name__ == "__main__":
+    main()
